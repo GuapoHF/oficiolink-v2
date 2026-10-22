@@ -26,10 +26,29 @@ export const PUBLIC_SPECIALIST_COLUMNS =
   'id,full_name,avatar_url,cover_url,headline,city,coverage_zones,bio,is_identity_verified,rating_avg,total_reviews,completed_jobs,primary_trade,primary_trade_label,years_experience,base_diagnostic_fee_mxn';
 
 const STORAGE_KEYS = {
-  SPECIALISTS: 'oficiolink_db_specialists_v2',
-  REQUESTS: 'oficiolink_db_requests_v2',
-  AUDIT_LOGS: 'oficiolink_db_audit_logs_v2',
+  SPECIALISTS: 'oficiolink_db_specialists_v3',
+  REQUESTS: 'oficiolink_db_requests_v3',
+  AUDIT_LOGS: 'oficiolink_db_audit_logs_v3',
 };
+
+export function resetLocalDatabaseToDefaultSeed(): {
+  specialists: Specialist[];
+  requests: ServiceRequest[];
+  auditLogs: SecurityAuditLogEntry[];
+} {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.SPECIALISTS);
+    localStorage.removeItem(STORAGE_KEYS.REQUESTS);
+    localStorage.removeItem(STORAGE_KEYS.AUDIT_LOGS);
+  } catch {
+    // Ignore storage errors
+  }
+  return {
+    specialists: INITIAL_SPECIALISTS.map(projectPublicSpecialistDTO),
+    requests: INITIAL_SERVICE_REQUESTS,
+    auditLogs: INITIAL_SECURITY_AUDIT_LOGS,
+  };
+}
 
 export const INITIAL_SECURITY_AUDIT_LOGS: SecurityAuditLogEntry[] = [
   {

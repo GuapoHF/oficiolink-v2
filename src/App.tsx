@@ -18,6 +18,7 @@ import {
   savePersistedRequests,
   loadPersistedAuditLogs,
   savePersistedAuditLogs,
+  resetLocalDatabaseToDefaultSeed,
 } from './services/databaseService';
 import {
   createSecureSessionState,
@@ -27,6 +28,10 @@ import {
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { ServiceRequestModal } from './components/ServiceRequestModal';
+import {
+  DemoFloatingBar,
+  QuickDemoModeId,
+} from './components/DemoFloatingBar';
 import { LandingView } from './views/LandingView';
 import { ExplorerView } from './views/ExplorerView';
 import { ProfileView } from './views/ProfileView';
@@ -37,6 +42,12 @@ import { CheckCircle2 } from 'lucide-react';
 
 export function App() {
   const [currentView, setCurrentView] = useState<AppView>('landing');
+  const [activeDemoMode, setActiveDemoMode] =
+    useState<QuickDemoModeId>('public_visitor');
+  const [dashboardMode, setDashboardMode] = useState<'especialista' | 'cliente'>(
+    'especialista'
+  );
+
   const [specialists, setSpecialists] = useState<Specialist[]>(() =>
     loadPersistedSpecialists()
   );
@@ -102,6 +113,67 @@ export function App() {
   ) => {
     const log = createAuditLogEntry(entry);
     setAuditLogs((prev) => [log, ...prev]);
+  };
+
+  const handleSelectDemoMode = (mode: QuickDemoModeId) => {
+    setActiveDemoMode(mode);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    if (mode === 'public_visitor') {
+      setCurrentView('landing');
+      triggerToast('Modo Demo: Vista Pública (Visitante) activa.');
+    } else if (mode === 'client_session') {
+      setSession((prev) =>
+        createSecureSessionState(
+          'client-uid-01',
+          'cliente.demo@oficiolink.mx',
+          'Ing. Carlos Alberto Méndez (Cliente)',
+          'client',
+          prev.refreshTokenGeneration
+        )
+      );
+      setDashboardMode('cliente');
+      setCurrentView('dashboard');
+      triggerToast(
+        'Modo Demo: Sesión de Cliente activa (Aprueba cotizaciones o emite reseñas verificadas).'
+      );
+    } else if (mode === 'specialist_session') {
+      setSession((prev) =>
+        createSecureSessionState(
+          'esp-1',
+          'roberto.mendoza@oficiolink.mx',
+          'Ing. Téc. Roberto Mendoza Morales',
+          'specialist',
+          prev.refreshTokenGeneration
+        )
+      );
+      setDashboardMode('especialista');
+      setCurrentView('dashboard');
+      triggerToast(
+        'Modo Demo: Sesión de Especialista Verificado activa (Gestiona solicitudes y portafolio).'
+      );
+    } else if (mode === 'onboarding_wizard') {
+      setCurrentView('onboarding');
+      triggerToast(
+        'Modo Demo: Flujo de Registro y Verificación de Identidad (INE + Biométrico) en 4 pasos.'
+      );
+    } else if (mode === 'security_lab') {
+      setCurrentView('security');
+      triggerToast(
+        'Modo Demo: Centro de Ciberseguridad (20 Controles AppSec & Monitor PostgreSQL).'
+      );
+    }
+  };
+
+  const handleResetSeed = () => {
+    const fresh = resetLocalDatabaseToDefaultSeed();
+    setSpecialists(fresh.specialists);
+    setSelectedSpecialist(fresh.specialists[0]);
+    setServiceRequests(fresh.requests);
+    setAuditLogs(fresh.auditLogs);
+    triggerToast(
+      `Base de Datos Local restablecida con los ${fresh.specialists.length} especialistas verificados de México.`
+    );
   };
 
   const handleExploreWithFilters = (
@@ -336,10 +408,10 @@ export function App() {
   ).length;
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FFFFFF] text-[#0F172A]">
+    <div className="min-h-screen flex flex-col bg-[#FFFFFF] text-[#0F172A] pb-16">
       {/* Global Toast Notification */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-md bg-[#0F172A] text-[#DBF6FF] px-5 py-4 rounded-2xl shadow-2xl border-2 border-[#FF2E3A] flex items-center gap-3 animate-bounce">
+        <div className="fixed top-24 right-5 z-50 max-w-md bg-[#0F172A] text-[#DBF6FF] px-5 py-4 rounded-2xl shadow-2xl border-2 border-[#FF2E3A] flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-[#FF2E3A] text-[#DBF6FF] flex items-center justify-center shrink-0">
             <CheckCircle2 className="w-5 h-5" />
           </div>
@@ -402,6 +474,8 @@ export function App() {
           <DashboardView
             requests={serviceRequests}
             specialists={specialists}
+            dashboardMode={dashboardMode}
+            onDashboardModeChange={setDashboardMode}
             onUpdateRequestStatus={handleUpdateRequestStatus}
             onAddPortfolioProject={handleAddPortfolioProject}
             onAddVerifiedReview={handleAddVerifiedReview}
@@ -428,6 +502,16 @@ export function App() {
         selectedSpecialist={modalTargetSpecialist}
         allSpecialists={specialists}
         onSubmitRequest={handleCreateServiceRequest}
+      />
+
+      {/* Discrete Floating Demo Mode Switcher */}
+      <DemoFloatingBar
+        activeDemoMode={activeDemoMode}
+        currentView={currentView}
+        specialistsCount={specialists.length}
+        requestsCount={serviceRequests.length}
+        onSelectDemoMode={handleSelectDemoMode}
+        onResetSeed={handleResetSeed}
       />
 
       {/* Footer */}

@@ -28,6 +28,8 @@ import { sanitizeUserText } from '../security/xssSanitizer';
 interface DashboardViewProps {
   requests: ServiceRequest[];
   specialists: Specialist[];
+  dashboardMode: 'especialista' | 'cliente';
+  onDashboardModeChange: (mode: 'especialista' | 'cliente') => void;
   onUpdateRequestStatus: (
     requestId: string,
     newStatus: ServiceRequestStatus,
@@ -47,13 +49,14 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({
   requests,
   specialists,
+  dashboardMode,
+  onDashboardModeChange,
   onUpdateRequestStatus,
   onAddPortfolioProject,
   onAddVerifiedReview,
   onOpenNewRequestModal,
   onViewSpecialistProfile,
 }) => {
-  const [dashboardMode, setDashboardMode] = useState<'especialista' | 'cliente'>('especialista');
   const [statusFilter, setStatusFilter] = useState<'todas' | ServiceRequestStatus>('todas');
 
   // Quote Form state for a specific request
@@ -201,7 +204,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="inline-flex p-1.5 rounded-2xl bg-[#FFFFFF] border border-[#E2E8F0]">
               <button
                 type="button"
-                onClick={() => setDashboardMode('especialista')}
+                onClick={() => onDashboardModeChange('especialista')}
                 className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
                   dashboardMode === 'especialista'
                     ? 'bg-[#FF2E3A] text-[#DBF6FF] shadow-sm'
@@ -212,7 +215,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setDashboardMode('cliente')}
+                onClick={() => onDashboardModeChange('cliente')}
                 className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
                   dashboardMode === 'cliente'
                     ? 'bg-[#FF2E3A] text-[#DBF6FF] shadow-sm'

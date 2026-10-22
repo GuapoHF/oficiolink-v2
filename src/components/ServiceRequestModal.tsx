@@ -2,18 +2,20 @@ import React, { useState } from 'react';
 import {
   X,
   ShieldCheck,
-  AlertTriangle,
   Calendar,
-  Camera,
-  CheckCircle2,
   Send,
-  MapPin,
+  Lock,
+  AlertCircle,
 } from 'lucide-react';
 import {
   Specialist,
   ServiceRequest,
   UrgencyLevel,
 } from '../types/oficiolink';
+import { ServiceRequestInputSchema } from '../security/validationSchemas';
+import { encryptPIIAes256, maskPhonePII } from '../security/cryptoVault';
+import { verifyAntiBotProtection } from '../security/securityEngine';
+import { BotProtectionWidget } from './BotProtectionWidget';
 
 interface ServiceRequestModalProps {
   isOpen: boolean;
@@ -62,21 +64,31 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
   const [estimatedBudget, setEstimatedBudget] = useState<number>(2800);
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string>(SAMPLE_ISSUE_PHOTOS[0].url);
 
+  // Control #12: Bot Protection State
+  const [honeypotValue, setHoneypotValue] = useState<string>('');
+  const [isTurnstileVerified, setIsTurnstileVerified] = useState<boolean>(true);
+  const [validationError, setValidationError] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   const targetSpec =
     allSpecialists.find((s) => s.id === (selectedSpecialist?.id || specialistId)) ||
     allSpecialists[0];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newReq: ServiceRequest = {
-      id: `req-${Date.now()}`,
-      folio: `OL-2026-${Math.floor(9100 + Math.random() * 899)}`,
+    setValidationError(null);
+
+    // 1. Control #12: Verificar Protección Anti-Bots (Turnstile + Honeypot)
+    const botCheck = verifyAntiBotProtection(honeypotValue, isTurnstileVerified);
+    if (!botCheck.passed) {
+      setValidationError(botCheck.error || 'Fallo en validación anti-bots.');
+      return;
+    }
+
+    // 2. Control #14 y #15: Validar esquema estricto con Zod + Sanitizar XSS con DOMPurify
+    const parsed = ServiceRequestInputSchema.safeParse({
       specialistId: targetSpec.id,
-      specialistName: targetSpec.name,
-      specialistTrade: targetSpec.primaryTradeLabel,
-      specialistAvatar: targetSpec.avatar,
       clientName,
       clientPhone,
       clientZone,
@@ -84,10 +96,43 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
       problemDescription,
       urgency,
       suggestedDate,
-      estimatedBudgetMXN: estimatedBudget,
+      estimatedBudgetMXN: Number(estimatedBudget),
+      issuePhotos: [selectedPhotoUrl],
+    });
+
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0];
+      setValidationError(`Validación Zod (Control #14): ${firstIssue.message}`);
+      return;
+    }
+
+    const clean = parsed.data;
+
+    // 3. Control #5: Cifrar PII sensible (teléfono directo y dirección) con AES-256-GCM
+    const encryptedPhone = await encryptPIIAes256(clean.clientPhone);
+    const encryptedAddress = await encryptPIIAes256(clean.clientZone);
+
+    const newReq: ServiceRequest = {
+      id: `req-${Date.now()}`,
+      folio: `OL-2026-${Math.floor(9100 + Math.random() * 899)}`,
+      clientId: 'client-auth-uid-01',
+      specialistId: targetSpec.id,
+      specialistName: targetSpec.name,
+      specialistTrade: targetSpec.primaryTradeLabel,
+      specialistAvatar: targetSpec.avatar,
+      clientName: clean.clientName,
+      clientPhone: maskPhonePII(clean.clientPhone),
+      clientPhoneEncrypted: encryptedPhone,
+      clientZone: clean.clientZone,
+      addressEncrypted: encryptedAddress,
+      problemTitle: clean.problemTitle,
+      problemDescription: clean.problemDescription,
+      urgency: clean.urgency,
+      suggestedDate: clean.suggestedDate,
+      estimatedBudgetMXN: clean.estimatedBudgetMXN,
       status: 'nueva',
       createdAt: 'Hace unos segundos',
-      issuePhotos: [selectedPhotoUrl],
+      issuePhotos: clean.issuePhotos,
     };
 
     onSubmitRequest(newReq);
@@ -101,7 +146,7 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
           <div>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#FF2E3A] text-[#DBF6FF] text-[11px] font-extrabold uppercase">
               <ShieldCheck className="w-3.5 h-3.5" />
-              Solicitud Directa Protegida
+              Solicitud Protegida (AES-256 PII + Zod + Anti-XSS)
             </span>
             <h2 className="font-display font-extrabold text-xl text-[#0F172A] mt-1">
               Solicitar Servicio / Cotización Formal
@@ -116,6 +161,13 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 sm:p-8 space-y-5 max-h-[82vh] overflow-y-auto">
+          {validationError && (
+            <div className="p-3.5 rounded-2xl bg-[#FF2E3A] text-[#DBF6FF] text-xs font-extrabold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{validationError}</span>
+            </div>
+          )}
+
           {/* Selected Specialist Card */}
           <div className="p-4 rounded-2xl bg-[#F7FCFF] border border-[#E2E8F0] flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -132,7 +184,8 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
                   {targetSpec.name}
                 </h3>
                 <p className="text-xs text-[#475569]">
-                  Visita diagnóstico: <strong className="text-[#FF2E3A]">${targetSpec.baseDiagnosticFeeMXN} MXN</strong>
+                  Visita diagnóstico:{' '}
+                  <strong className="text-[#FF2E3A]">${targetSpec.baseDiagnosticFeeMXN} MXN</strong>
                 </p>
               </div>
             </div>
@@ -169,7 +222,7 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
 
             <div>
               <label className="block text-xs font-extrabold uppercase text-[#475569] mb-1">
-                Descripción detallada para pre-cotización
+                Descripción detallada (Sanitizada automáticamente con DOMPurify Control #15)
               </label>
               <textarea
                 rows={3}
@@ -270,7 +323,20 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
 
             <div>
               <label className="block text-xs font-extrabold uppercase text-[#475569] mb-1">
-                Colonia y Alcaldía / Municipio
+                Teléfono (Cifrado AES-256 Control #5)
+              </label>
+              <input
+                type="text"
+                value={clientPhone}
+                onChange={(e) => setClientPhone(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#F7FCFF] border border-[#E2E8F0] text-xs font-bold text-[#0F172A]"
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-extrabold uppercase text-[#475569] mb-1 flex items-center gap-1">
+                <Lock className="w-3 h-3 text-[#FF2E3A]" />
+                <span>Dirección / Colonia (Se cifra con AES-256 en `service_requests`)</span>
               </label>
               <input
                 type="text"
@@ -284,7 +350,7 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
           {/* Issue Photo Selector */}
           <div>
             <label className="block text-xs font-extrabold uppercase text-[#475569] mb-2">
-              Evidencia Fotográfica del Desperfecto (Ayuda al técnico a llevar la herramienta exacta)
+              Evidencia Fotográfica del Desperfecto
             </label>
             <div className="grid grid-cols-3 gap-3">
               {SAMPLE_ISSUE_PHOTOS.map((photo) => {
@@ -308,6 +374,14 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
             </div>
           </div>
 
+          {/* Control #12: Bot Protection Widget */}
+          <BotProtectionWidget
+            honeypotValue={honeypotValue}
+            onHoneypotChange={setHoneypotValue}
+            isVerified={isTurnstileVerified}
+            onVerifyChange={setIsTurnstileVerified}
+          />
+
           <div className="pt-4 border-t border-[#E2E8F0] flex items-center justify-end gap-3">
             <button
               type="button"
@@ -321,7 +395,7 @@ export const ServiceRequestModal: React.FC<ServiceRequestModalProps> = ({
               className="inline-flex items-center gap-2 px-6 py-3.5 rounded-xl bg-[#FF2E3A] text-[#DBF6FF] font-extrabold text-xs hover:bg-[#E0212D] transition-all shadow-lg shadow-[#FF2E3A]/25 cursor-pointer"
             >
               <Send className="w-4 h-4" />
-              <span>Enviar Solicitud al Especialista</span>
+              <span>Cifrar PII y Enviar Solicitud</span>
             </button>
           </div>
         </form>

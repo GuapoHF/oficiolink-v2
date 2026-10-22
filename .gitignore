@@ -9,10 +9,18 @@ dist-ssr/
 build/
 out/
 
-# Environment variables (keep .env.example tracked)
+# CONTROL #2: Bloqueo estricto de archivos .env y llaves criptográficas privadas
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.cert
+*.crt
+secrets/
+private/
 
 # Logs & Debugging
 logs/

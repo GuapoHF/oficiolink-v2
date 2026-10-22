@@ -78,6 +78,7 @@ export interface Specialist {
     backgroundCheck: boolean;
     verifiedSince: string;
     badgeCode: string;
+    validationHash?: string;
   };
   city: string;
   coverageZones: string[];
@@ -113,13 +114,16 @@ export type UrgencyLevel = 'emergencia_hoy' | 'proximos_dias' | 'programado';
 export interface ServiceRequest {
   id: string;
   folio: string;
+  clientId?: string;
   specialistId: string;
   specialistName: string;
   specialistTrade: string;
   specialistAvatar: string;
   clientName: string;
   clientPhone: string;
+  clientPhoneEncrypted?: string;
   clientZone: string;
+  addressEncrypted?: string;
   problemTitle: string;
   problemDescription: string;
   urgency: UrgencyLevel;
@@ -134,9 +138,38 @@ export interface ServiceRequest {
   reviewed?: boolean;
 }
 
+export type AuditSeverity = 'INFO' | 'WARN' | 'CRITICAL';
+
+export interface SecurityAuditLogEntry {
+  id: string;
+  timestamp: string;
+  actorUserId: string;
+  eventType: string;
+  severity: AuditSeverity;
+  targetTable: string;
+  targetRecordId: string;
+  queryDurationMs: number;
+  controlReference: string;
+  details: string;
+}
+
+export interface AuthSessionState {
+  isAuthenticated: boolean;
+  userId: string;
+  email: string;
+  fullName: string;
+  role: 'client' | 'specialist' | 'admin';
+  cookieName: string;
+  cookieFlags: string;
+  jwtTokenPreview: string;
+  refreshTokenGeneration: number;
+  expiresAt: string;
+}
+
 export type AppView =
   | 'landing'
   | 'explorer'
   | 'profile'
   | 'onboarding'
-  | 'dashboard';
+  | 'dashboard'
+  | 'security';

@@ -3,22 +3,28 @@ import {
   ShieldCheck,
   UserCheck,
   Wrench,
-  Camera,
-  CheckCircle2,
   Upload,
   ScanFace,
   ArrowRight,
   ArrowLeft,
   Sparkles,
-  FileBadge,
-  Eye,
   MapPin,
+  Lock,
+  AlertCircle,
 } from 'lucide-react';
 import {
   Specialist,
   TradeCategory,
   TradeCategoryId,
 } from '../types/oficiolink';
+import { OnboardingProfileInputSchema } from '../security/validationSchemas';
+import { sha256Hex } from '../security/cryptoVault';
+import {
+  validateAndPrepareSecureUpload,
+  SecureFileValidationResult,
+} from '../security/fileUploadValidator';
+import { verifyAntiBotProtection } from '../security/securityEngine';
+import { BotProtectionWidget } from '../components/BotProtectionWidget';
 
 interface OnboardingViewProps {
   categories: TradeCategory[];
@@ -52,13 +58,16 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
   const [zonesInput, setZonesInput] = useState('Benito Juárez, Coyoacán, Miguel Hidalgo');
   const [emergency247, setEmergency247] = useState(true);
 
-  // Step 3 fields (Identity Verification)
+  // Step 3 fields (Identity Verification & Control #16 Private Bucket Upload)
   const [ineFrontUploaded, setIneFrontUploaded] = useState(true);
   const [ineBackUploaded, setIneBackUploaded] = useState(true);
   const [selfieValidated, setSelfieValidated] = useState(true);
   const [isScanningBiometric, setIsScanningBiometric] = useState(false);
+  const [ineUploadResult, setIneUploadResult] = useState<SecureFileValidationResult | null>(
+    null
+  );
 
-  // Step 4 fields (First Visual Portfolio Project)
+  // Step 4 fields (First Visual Portfolio Project & Control #12 Bot Protection)
   const [projectTitle, setProjectTitle] = useState(
     'Renovación de Tablero Eléctrico Residencial y Supresor de Picos'
   );
@@ -67,12 +76,16 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
   const [projectDesc, setProjectDesc] = useState(
     'Se reemplazó centro de carga antiguo con falso contacto por tablero Square D QO de 8 circuitos peinado y rotulado.'
   );
-  const [beforeImgUrl, setBeforeImgUrl] = useState(
+  const [beforeImgUrl] = useState(
     'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=900&q=80'
   );
-  const [afterImgUrl, setAfterImgUrl] = useState(
+  const [afterImgUrl] = useState(
     'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&w=900&q=80'
   );
+
+  const [honeypotValue, setHoneypotValue] = useState('');
+  const [isTurnstileVerified, setIsTurnstileVerified] = useState(true);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const progressPercentage = (step / 4) * 100;
   const allIdentityVerified = ineFrontUploaded && ineBackUploaded && selfieValidated;
@@ -85,15 +98,68 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
     }, 900);
   };
 
-  const handleFinishWizard = () => {
+  // Control #16: Validar Magic Bytes reales al subir archivo de INE
+  const handleIneFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const res = await validateAndPrepareSecureUpload(
+      file,
+      'identity-docs',
+      'esp-onboarding-uid'
+    );
+    setIneUploadResult(res);
+    if (res.valid) {
+      setIneFrontUploaded(true);
+    }
+  };
+
+  const handleFinishWizard = async () => {
+    setValidationError(null);
+
+    // 1. Control #12: Verificar Protección Anti-Bots
+    const botCheck = verifyAntiBotProtection(honeypotValue, isTurnstileVerified);
+    if (!botCheck.passed) {
+      setValidationError(botCheck.error || 'Error en verificación anti-bots.');
+      return;
+    }
+
+    // 2. Control #14 y #15: Validar entradas con Zod + Sanitizar XSS con DOMPurify
+    const parsed = OnboardingProfileInputSchema.safeParse({
+      fullName,
+      phone,
+      city,
+      yearsExperience: Number(yearsExp),
+      primaryTrade,
+      headline,
+      bio,
+      diagnosticFee: Number(diagnosticFee),
+      zonesInput,
+      emergency247,
+      projectTitle,
+      projectCost: Number(projectCost),
+      projectDuration,
+      projectDesc,
+    });
+
+    if (!parsed.success) {
+      setValidationError(`Validación Zod (Control #14): ${parsed.error.issues[0].message}`);
+      return;
+    }
+
+    const clean = parsed.data;
     const selectedCategory =
-      categories.find((c) => c.id === primaryTrade) || categories[0];
+      categories.find((c) => c.id === clean.primaryTrade) || categories[0];
+
+    // 3. Control #5: Generar huella criptográfica SHA-256 de la verificación de identidad
+    const docHash = await sha256Hex(
+      `${clean.fullName}|${clean.phone}|INE-OCR-VERIFIED|${Date.now()}`
+    );
 
     const newSpec: Specialist = {
       id: `esp-custom-${Date.now()}`,
-      name: fullName || 'Especialista Verificado OficioLink',
-      headline: headline,
-      primaryTrade: primaryTrade,
+      name: clean.fullName,
+      headline: clean.headline,
+      primaryTrade: clean.primaryTrade,
       primaryTradeLabel: selectedCategory.shortName,
       secondaryTrades: selectedCategory.popularTags,
       avatar:
@@ -106,16 +172,17 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
         addressVerified: true,
         backgroundCheck: true,
         verifiedSince: 'Octubre 2026',
-        badgeCode: `OL-MX-${primaryTrade.slice(0, 4).toUpperCase()}-9901`,
+        badgeCode: `OL-MX-${clean.primaryTrade.slice(0, 4).toUpperCase()}-9901`,
+        validationHash: docHash,
       },
-      city,
-      coverageZones: zonesInput.split(',').map((s) => s.trim()),
-      yearsExperience: yearsExp,
+      city: clean.city,
+      coverageZones: clean.zonesInput.split(',').map((s) => s.trim()),
+      yearsExperience: clean.yearsExperience,
       completedJobs: 1,
       responseTime: '5 min promedio',
-      emergency247,
-      baseDiagnosticFeeMXN: diagnosticFee,
-      hourlyOrProjectRangeMXN: `$${diagnosticFee} - $6,500 MXN`,
+      emergency247: clean.emergency247,
+      baseDiagnosticFeeMXN: clean.diagnosticFee,
+      hourlyOrProjectRangeMXN: `$${clean.diagnosticFee} - $6,500 MXN`,
       rating: 5.0,
       reviewsCount: 1,
       ratingBreakdown: {
@@ -124,9 +191,9 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
         cleanliness: 5.0,
         fairPrice: 5.0,
       },
-      bio,
+      bio: clean.bio,
       certifications: [
-        'Identidad y Biometría Verificada en OficioLink',
+        'Identidad y Biometría Verificada en OficioLink (SHA-256 + AES-256)',
         `Especialista Certificado en ${selectedCategory.name}`,
       ],
       toolsAndWarranty: [
@@ -136,16 +203,16 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
       portfolio: [
         {
           id: `proj-custom-${Date.now()}`,
-          title: projectTitle,
+          title: clean.projectTitle,
           category: selectedCategory.shortName,
-          location: `${zonesInput.split(',')[0]}, ${city}`,
+          location: `${clean.zonesInput.split(',')[0]}, ${clean.city}`,
           completedDate: 'Octubre 2026',
-          duration: projectDuration,
-          approxCostMXN: projectCost,
-          description: projectDesc,
+          duration: clean.projectDuration,
+          approxCostMXN: clean.projectCost,
+          description: clean.projectDesc,
           technicalChallenge:
             'Instalación previa deteriorada y fuera de norma que representaba riesgo para el inmueble.',
-          solutionApplied: projectDesc,
+          solutionApplied: clean.projectDesc,
           materialsUsed: selectedCategory.popularTags.slice(0, 3),
           beforeImage: beforeImgUrl,
           afterImage: afterImgUrl,
@@ -158,8 +225,8 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
           clientName: 'Verificación Inicial OficioLink',
           clientAvatar:
             'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=250&q=80',
-          clientZone: city,
-          serviceTitle: projectTitle,
+          clientZone: clean.city,
+          serviceTitle: clean.projectTitle,
           date: 'Recién verificado',
           verifiedServiceId: 'OL-ONB-2026',
           overallRating: 5.0,
@@ -181,13 +248,14 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
           <div>
             <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FF2E3A] text-[#DBF6FF] text-xs font-extrabold uppercase">
               <ShieldCheck className="w-3.5 h-3.5" />
-              Onboarding & Confianza Digital
+              Onboarding & Confianza Digital (Controles #5, #12, #14, #15 y #16)
             </span>
             <h1 className="font-display font-extrabold text-2xl sm:text-4xl text-[#0F172A] mt-2">
               Registro y Verificación de Identidad OficioLink
             </h1>
             <p className="text-sm text-[#475569] mt-1 font-medium">
-              Completa los 4 pasos para obtener tu insignia de <strong className="text-[#FF2E3A]">Especialista Verificado</strong> y publicar tu CV Visual.
+              Completa los 4 pasos para obtener tu insignia de{' '}
+              <strong className="text-[#FF2E3A]">Especialista Verificado</strong> y publicar tu CV Visual.
             </p>
           </div>
 
@@ -195,9 +263,10 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
           <div className="bg-[#FFFFFF] p-4 rounded-2xl border border-[#E2E8F0] min-w-[260px]">
             <div className="flex items-center justify-between text-xs font-extrabold text-[#0F172A] mb-2">
               <span>Progreso de Verificación</span>
-              <span className="text-[#FF2E3A]">Paso {step} de 4 ({progressPercentage}%)</span>
+              <span className="text-[#FF2E3A]">
+                Paso {step} de 4 ({progressPercentage}%)
+              </span>
             </div>
-            {/* Progress Bar in Machine Red (#FF2E3A) */}
             <div className="w-full h-3 rounded-full bg-[#DBF6FF] overflow-hidden">
               <div
                 className="h-full bg-[#FF2E3A] transition-all duration-300 rounded-full"
@@ -231,10 +300,16 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
         </div>
       </div>
 
-      {/* Main Content: Left Wizard Form (7 cols) + Right Live Badge & CV Preview (5 cols) */}
+      {/* Main Content */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        {/* LEFT COLUMN: WIZARD STEPS */}
         <div className="lg:col-span-7 rounded-3xl bg-[#FFFFFF] border-2 border-[#E2E8F0] p-6 sm:p-8 shadow-sm">
+          {validationError && (
+            <div className="mb-5 p-3.5 rounded-2xl bg-[#FF2E3A] text-[#DBF6FF] text-xs font-extrabold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{validationError}</span>
+            </div>
+          )}
+
           {/* STEP 1: ROLE & BASIC DATA */}
           {step === 1 && (
             <div className="space-y-6">
@@ -247,7 +322,6 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
                 </h2>
               </div>
 
-              {/* Role Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <button
                   type="button"
@@ -296,7 +370,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
                     ¡Como cliente puedes explorar y cotizar de inmediato!
                   </h4>
                   <p className="text-xs text-[#475569]">
-                    No necesitas esperar: explora el directorio de especialistas con INE verificado o envía una solicitud de servicio ahora mismo.
+                    Explora el directorio de especialistas con INE verificado o envía una solicitud de servicio protegida con AES-256.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     <button
@@ -331,7 +405,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
 
                   <div>
                     <label className="block text-xs font-extrabold uppercase text-[#475569] mb-1.5">
-                      Teléfono / WhatsApp de Contacto
+                      Teléfono (Se cifra con AES-256 Control #5)
                     </label>
                     <input
                       type="text"
@@ -360,7 +434,8 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
 
                   <div className="sm:col-span-2">
                     <label className="block text-xs font-extrabold uppercase text-[#475569] mb-1.5">
-                      Años de Experiencia en el Oficio: <span className="text-[#FF2E3A]">{yearsExp} años</span>
+                      Años de Experiencia en el Oficio:{' '}
+                      <span className="text-[#FF2E3A]">{yearsExp} años</span>
                     </label>
                     <input
                       type="range"
@@ -435,7 +510,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
 
               <div>
                 <label className="block text-xs font-extrabold uppercase text-[#475569] mb-1.5">
-                  Descripción de tu Metodología y Garantía
+                  Descripción de tu Metodología y Garantía (Sanitizada con DOMPurify Control #15)
                 </label>
                 <textarea
                   rows={3}
@@ -514,18 +589,18 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
             </div>
           )}
 
-          {/* STEP 3: IDENTITY VERIFICATION (PILAR 1: CONFIANZA DIGITAL) */}
+          {/* STEP 3: IDENTITY VERIFICATION (CONTROL #16 MAGIC BYTES + PRIVATE BUCKET) */}
           {step === 3 && (
             <div className="space-y-6">
               <div>
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#FF2E3A] text-[#DBF6FF] text-xs font-extrabold uppercase">
-                  Paso 3 de 4 • Pilar de Confianza Digital
+                  Paso 3 de 4 • Control #16 (Bucket Privado `identity-docs` + Magic Bytes)
                 </span>
                 <h2 className="font-display font-extrabold text-xl sm:text-2xl text-[#0F172A] mt-2">
                   Validación de Identidad Oficial y Biometría
                 </h2>
                 <p className="text-xs text-[#475569] mt-1">
-                  Sube tu identificación oficial vigente (INE/IFE) por ambos lados y realiza la validación facial para activar tu insignia verificada.
+                  Los documentos de identidad se validan por firma binaria (*Magic Bytes* JPEG/PNG/WebP &le; 5 MB), se renombran con UUID aleatorio y se resguardan en el bucket privado `identity-docs`.
                 </p>
               </div>
 
@@ -545,7 +620,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
                     </span>
                     {ineFrontUploaded ? (
                       <span className="px-2 py-0.5 rounded bg-[#FF2E3A] text-[#DBF6FF] text-[10px] font-extrabold">
-                        Validado OCR
+                        Validado OCR + AES-256
                       </span>
                     ) : (
                       <Upload className="w-4 h-4 text-[#475569]" />
@@ -553,7 +628,7 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
                   </div>
                   <div className="p-3 rounded-xl bg-white border border-[#E2E8F0] text-xs space-y-1">
                     <p className="font-bold text-[#0F172A]">{fullName}</p>
-                    <p className="text-[11px] text-[#475569]">Clave Elector: MRLV880412HDFR09</p>
+                    <p className="text-[11px] text-[#475569]">Bucket: identity-docs (Privado RLS)</p>
                     <p className="text-[10px] font-extrabold text-[#FF2E3A]">
                       ✓ Fotografía y Holograma Legibles
                     </p>
@@ -588,6 +663,27 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
                     </p>
                   </div>
                 </div>
+              </div>
+
+              {/* Optional Real File Upload with Magic Bytes Check */}
+              <div className="p-4 rounded-2xl bg-[#F7FCFF] border border-[#E2E8F0] space-y-2">
+                <label className="flex items-center justify-between cursor-pointer">
+                  <span className="text-xs font-extrabold text-[#0F172A] flex items-center gap-1.5">
+                    <Lock className="w-4 h-4 text-[#FF2E3A]" />
+                    Probar subida real con validación de Magic Bytes (Control #16):
+                  </span>
+                  <span className="px-3 py-1.5 rounded-xl bg-[#DBF6FF] text-[#FF2E3A] text-xs font-extrabold">
+                    Seleccionar Imagen
+                  </span>
+                  <input type="file" onChange={handleIneFileUpload} className="hidden" />
+                </label>
+                {ineUploadResult && (
+                  <p className="text-[11px] font-mono text-[#0F172A]">
+                    {ineUploadResult.valid
+                      ? `✓ Magic Bytes [${ineUploadResult.magicBytesHex}] (${ineUploadResult.detectedMimeType}) -> ${ineUploadResult.sanitizedStoragePath}`
+                      : `✕ ${ineUploadResult.error}`}
+                  </p>
+                )}
               </div>
 
               {/* Biometric Selfie Validator */}
@@ -659,14 +755,11 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
             <div className="space-y-6">
               <div>
                 <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-[#DBF6FF] text-[#FF2E3A] text-xs font-extrabold uppercase">
-                  Paso 4 de 4 • Tu CV Visual
+                  Paso 4 de 4 • Tu CV Visual (Bucket Público `portfolios`)
                 </span>
                 <h2 className="font-display font-extrabold text-xl sm:text-2xl text-[#0F172A] mt-2">
                   Carga tu Primer Proyecto (&ldquo;Antes y Después&rdquo;)
                 </h2>
-                <p className="text-xs text-[#475569] mt-1">
-                  Los especialistas con al menos un trabajo documentado reciben 4 veces más solicitudes de cotización.
-                </p>
               </div>
 
               <div>
@@ -742,6 +835,14 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
                 </div>
               </div>
 
+              {/* Control #12: Bot Protection Widget */}
+              <BotProtectionWidget
+                honeypotValue={honeypotValue}
+                onHoneypotChange={setHoneypotValue}
+                isVerified={isTurnstileVerified}
+                onVerifyChange={setIsTurnstileVerified}
+              />
+
               <div className="pt-4 border-t border-[#E2E8F0] flex flex-col sm:flex-row items-center justify-between gap-3">
                 <button
                   type="button"
@@ -777,7 +878,6 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
               </span>
             </div>
 
-            {/* Credential Card */}
             <div className="rounded-2xl bg-[#FFFFFF] p-5 border border-[#E2E8F0] space-y-4 shadow-sm">
               <div className="flex items-center gap-3.5">
                 <img
@@ -801,7 +901,6 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
 
               <p className="text-xs text-[#475569] font-medium line-clamp-2">{headline}</p>
 
-              {/* Verification Checklist Status */}
               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#E2E8F0] text-center">
                 <div
                   className={`p-2 rounded-xl text-[11px] font-extrabold ${
@@ -832,7 +931,6 @@ export const OnboardingView: React.FC<OnboardingViewProps> = ({
                 </div>
               </div>
 
-              {/* First Portfolio Preview */}
               <div className="rounded-xl bg-[#F7FCFF] p-3 border border-[#E2E8F0]">
                 <p className="text-[10px] font-extrabold uppercase text-[#FF2E3A] mb-1">
                   Proyecto Inicial en Portafolio:

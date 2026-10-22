@@ -1,20 +1,24 @@
 {
   "name": "oficiolink",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "Preview": "vite preview"
+    "Preview": "vite preview",
+    "security:check": "node scripts/check-secrets.mjs && npm audit --audit-level=high"
   },
   "dependencies": {
+    "dompurify": "^3.2.4",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.6",
+    "@types/dompurify": "^3.0.5",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
     "@vitejs/plugin-react": "^4.3.4",

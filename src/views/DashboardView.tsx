@@ -22,6 +22,8 @@ import {
   PortfolioProject,
   VerifiedReview,
 } from '../types/oficiolink';
+import { VerifiedReviewInputSchema } from '../security/validationSchemas';
+import { sanitizeUserText } from '../security/xssSanitizer';
 
 interface DashboardViewProps {
   requests: ServiceRequest[];
@@ -90,24 +92,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     requests.filter((r) => r.status === st).length;
 
   const handleSendQuote = (reqId: string) => {
-    onUpdateRequestStatus(reqId, 'cotizada', quoteAmountInput, quoteNotesInput);
+    onUpdateRequestStatus(
+      reqId,
+      'cotizada',
+      quoteAmountInput,
+      sanitizeUserText(quoteNotesInput)
+    );
     setQuotingRequestId(null);
   };
 
   const handlePublishQuickProject = (e: React.FormEvent) => {
     e.preventDefault();
     const targetSpecialist = specialists[0];
+    const cleanTitle = sanitizeUserText(newProjTitle);
+    const cleanDesc = sanitizeUserText(newProjDesc);
     const newProj: PortfolioProject = {
       id: `proj-dash-${Date.now()}`,
-      title: newProjTitle,
+      title: cleanTitle,
       category: targetSpecialist.primaryTradeLabel,
       location: `${targetSpecialist.city}`,
       completedDate: 'Octubre 2026',
       duration: '1 jornada',
       approxCostMXN: newProjCost,
-      description: newProjDesc,
+      description: cleanDesc,
       technicalChallenge: 'Falla recurrente reportada mediante orden de servicio OficioLink.',
-      solutionApplied: newProjDesc,
+      solutionApplied: cleanDesc,
       materialsUsed: targetSpecialist.secondaryTrades.slice(0, 3),
       beforeImage:
         'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=900&q=80',
@@ -125,6 +134,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   const handleSubmitClientReview = (req: ServiceRequest) => {
+    const parsed = VerifiedReviewInputSchema.safeParse({
+      serviceRequestId: req.id,
+      specialistId: req.specialistId,
+      punctuality: revPunctuality,
+      quality: revQuality,
+      cleanliness: revCleanliness,
+      fairPrice: revFairPrice,
+      comment: revComment,
+    });
+
+    const sanitizedComment = parsed.success
+      ? parsed.data.comment
+      : sanitizeUserText(revComment);
+
     const avg = Number(
       ((revPunctuality + revQuality + revCleanliness + revFairPrice) / 4).toFixed(2)
     );
@@ -144,7 +167,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         cleanliness: revCleanliness,
         fairPrice: revFairPrice,
       },
-      comment: revComment,
+      comment: sanitizedComment,
     };
 
     onAddVerifiedReview(req.specialistId, req.id, newRev);
@@ -212,45 +235,65 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Bento KPI Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+        <div className="rounded-3xl bg-[#FFFFFF] border-2 border-[#E2E8F0] p-5">
+          <span className="text-xs font-extrabold uppercase text-[#475569]">
+            Ingresos del Mes
+          </span>
+          <p className="font-display font-extrabold text-2xl text-[#0F172A] mt-1">
+            $38,450
+          </p>
+          <p className="text-xs text-[#FF2E3A] font-bold mt-1">+24% vs mes ant.</p>
+        </div>
+
+        <div className="rounded-3xl bg-[#FFFFFF] border-2 border-[#E2E8F0] p-5">
+          <span className="text-xs font-extrabold uppercase text-[#475569]">
+            Vistas al CV Visual
+          </span>
+          <p className="font-display font-extrabold text-2xl text-[#0F172A] mt-1">
+            1,420
+          </p>
+          <p className="text-xs text-[#475569] mt-1">Clientes en tu zona</p>
+        </div>
+
         <div className="rounded-3xl bg-[#FFFFFF] border-2 border-[#E2E8F0] p-5">
           <span className="text-xs font-extrabold uppercase text-[#475569]">
             Nuevas por Cotizar
           </span>
-          <p className="font-display font-extrabold text-3xl text-[#FF2E3A] mt-1">
+          <p className="font-display font-extrabold text-2xl text-[#FF2E3A] mt-1">
             {countByStatus('nueva')}
           </p>
-          <p className="text-xs text-[#475569] mt-1">Requieren respuesta rápida</p>
+          <p className="text-xs text-[#475569] mt-1">Respuesta rápida</p>
         </div>
 
         <div className="rounded-3xl bg-[#FFFFFF] border-2 border-[#E2E8F0] p-5">
           <span className="text-xs font-extrabold uppercase text-[#475569]">
-            Cotizadas / En Revisión
+            Cotizadas
           </span>
-          <p className="font-display font-extrabold text-3xl text-[#0F172A] mt-1">
+          <p className="font-display font-extrabold text-2xl text-[#0F172A] mt-1">
             {countByStatus('cotizada')}
           </p>
-          <p className="text-xs text-[#475569] mt-1">Con presupuesto desglosado</p>
+          <p className="text-xs text-[#475569] mt-1">Presupuesto enviado</p>
         </div>
 
         <div className="rounded-3xl bg-[#DBF6FF] border border-[#FF2E3A]/20 p-5">
           <span className="text-xs font-extrabold uppercase text-[#0F172A]">
-            Servicios En Progreso
+            En Progreso
           </span>
-          <p className="font-display font-extrabold text-3xl text-[#FF2E3A] mt-1">
+          <p className="font-display font-extrabold text-2xl text-[#FF2E3A] mt-1">
             {countByStatus('en_progreso')}
           </p>
-          <p className="text-xs text-[#0F172A] font-semibold mt-1">Garantía OficioLink activa</p>
+          <p className="text-xs text-[#0F172A] font-semibold mt-1">Garantía activa</p>
         </div>
 
         <div className="rounded-3xl bg-[#FF2E3A] text-[#DBF6FF] p-5 shadow-lg shadow-[#FF2E3A]/20">
           <span className="text-xs font-extrabold uppercase text-[#DBF6FF]/90">
-            Trabajos Finalizados
+            Finalizados
           </span>
-          <p className="font-display font-extrabold text-3xl text-[#DBF6FF] mt-1">
+          <p className="font-display font-extrabold text-2xl text-[#DBF6FF] mt-1">
             {countByStatus('finalizada')}
           </p>
-          <p className="text-xs text-[#DBF6FF]/90 mt-1">Listos para Reseña Verificada</p>
+          <p className="text-xs text-[#DBF6FF]/90 mt-1">Reseña Verificada</p>
         </div>
       </div>
 

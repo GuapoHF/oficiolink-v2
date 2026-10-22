@@ -30,14 +30,19 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const navItems: { id: AppView; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'landing', label: 'Inicio', icon: <Sparkles className="w-4 h-4" /> },
-    { id: 'explorer', label: 'Explorar Especialistas', icon: <Search className="w-4 h-4" /> },
+    { id: 'explorer', label: 'Explorar', icon: <Search className="w-4 h-4" /> },
     { id: 'profile', label: 'CV Visual', icon: <Briefcase className="w-4 h-4" /> },
-    { id: 'onboarding', label: 'Verificación / Registro', icon: <UserCheck className="w-4 h-4" /> },
+    { id: 'onboarding', label: 'Verificación', icon: <UserCheck className="w-4 h-4" /> },
     {
       id: 'dashboard',
-      label: 'Dashboard & Solicitudes',
+      label: 'Solicitudes',
       icon: <LayoutDashboard className="w-4 h-4" />,
       badge: pendingRequestsCount,
+    },
+    {
+      id: 'security',
+      label: 'Seguridad & DB (20/20)',
+      icon: <ShieldCheck className="w-4 h-4" />,
     },
   ];
 
